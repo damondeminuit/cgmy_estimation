@@ -10,7 +10,7 @@ class CGMY:
     def __init__(self, data, params, adjust_L=False):
         self.data = data
         self.L = 2.5 * np.max(np.abs(self.data))
-        self.N = 2**15
+        self.N = 2**17
 
         self.c, self.g, self.m, self.y, self.sigma = params
         self.mu = 0
@@ -110,7 +110,7 @@ class CGMY:
         return samples
 
     def sample_cgmy_positive(self, n, L, N, t=1, sigma_prop=0.1):
-        _, pdf = self.compute_pdf_from_cf(chara=self.chara_jump, N=N, L=L, t=t)
+        _, pdf = self.compute_pdf_from_cf(N=N, L=L, t=t)
 
         curr = np.random.normal(0, sigma_prop)
         ix_curr = np.int64((curr + L / 2) * N / L)
