@@ -10,32 +10,38 @@ class CGMY:
     def __init__(self, data, params, adjust_L=False):
         self.data = data
         self.L = 2.5 * np.max(np.abs(self.data))
+
+        # Ensure the high-density regions are contained in the grid
+        if adjust_L:
+            self.L = 2.5 * max(
+                np.max(np.abs(self.data)), np.abs(self.mean) + 3 * np.sqrt(self.var)
+            )
         self.N = 2**17
 
+        # Unpack the model parameters
         self.c, self.g, self.m, self.y, self.sigma = params
         self.mu = 0
-        if adjust_L:
-            if np.abs(self.mean) + 3 * np.sqrt(self.var) > np.max(np.abs(self.data)):
-                self.L = 2.5 * max(
-                    np.max(np.abs(self.data)), np.abs(self.mean) + 3 * np.sqrt(self.var)
-                )
 
-        if self.c < 0 or self.g < 0 or self.m < 0:
-            raise ValueError("Parameters c, g and m must be positive.")
+        if self.c < 0 or self.g < 0 or self.m < 0 or self.sigma < 0:
+            raise ValueError("Parameters c, g, m and sigma must be positive.")
 
         if self.y > 2:
             raise ValueError("Parameter y must be less than 2.")
 
+        # Store to avoid several computations
         self.m_power_y = self.m**self.y
         self.g_power_y = self.g**self.y
         self.gamma_y = gamma(-self.y)
         self.mult_cst = self.c * self.gamma_y
 
+        # map the data to its grid interval
         self.density = pd.DataFrame({"rets": self.data})
         self.density["interval"] = ((self.data + self.L / 2) * self.N / self.L).astype(
             "int32"
         )
-        self.l = np.inf
+
+        # Initialize the log-likelihood
+        self.l = None
 
     def chara_jump(self, u, t=1):
         # Characteristic function of the jump part
@@ -48,7 +54,9 @@ class CGMY:
         # Full Characteristic function
         res = self.chara_jump(u, t)
         res *= np.exp(1j * self.mu * u * t)
-        res *= np.exp(-0.5 * t * (self.sigma * u) ** 2)
+        res *= np.exp(
+            -0.5 * t * (self.sigma * u) ** 2
+        )  # include Brownian Motion component
         return res
 
     # Use of FFT take from chatgpt
@@ -56,6 +64,8 @@ class CGMY:
         """
         Compute PDF from characteristic function using FFT.
         N: Number of grid points (power of 2 for FFT efficiency).
+        L: Length of the real grid domain
+        t: time of the process
         """
         if N is None:
             N = self.N
@@ -85,6 +95,11 @@ class CGMY:
         return self.l
 
     def compute_density(self, x, t=1):
+        """
+        Function to compute the true density of the process at time t
+        Involves numerical integration and Fourier inversion.
+        """
+
         # Compute Fourier transform to retrieve the density
         def integrand(u):
             return np.exp(-1j * x * u) * self.chara(u=u, t=t)
@@ -93,34 +108,54 @@ class CGMY:
         return res / (2 * np.pi)
 
     def sample_cgmy_negative(self, n, t=1):
+        """
+        Sample from the Compound Poisson Process at time t when Y < 0
+        """
+
+        # unit rate of the Poisson Process
         _lambda = self.c * gamma(-self.y) * (self.g**self.y + self.m**self.y)
-        p = self.g**self.y / (self.g**self.y + self.m**self.y)
+        # rate of the Poisson Process at time t
         rate = _lambda * t
+
+        # weight of the firtst mixture component
+        p = self.g**self.y / (self.g**self.y + self.m**self.y)
+
         samples = []
         for i in range(n):
             x = 0
-            nb = np.random.poisson(lam=rate)
+            nb = np.random.poisson(lam=rate) # number of jump variables
             for j in range(nb):
-                if np.random.uniform() < p:
-                    x -= np.random.gamma(shape=-self.y, scale=1 / self.g)
-                else:
+                if np.random.uniform() < p: # sample from the first mixture component
+                    x -= np.random.gamma(shape=-self.y, scale=1 / self.g) # opposite of sample from a gamma distribution
+                else: # sample from the second mixture component
                     x += np.random.gamma(shape=-self.y, scale=1 / self.m)
             samples.append(x)
 
         return samples
 
     def sample_cgmy_positive(self, n, L, N, t=1, sigma_prop=0.1):
+        """
+        Sample from CGMY at time t when Y > 0
+        """
         _, pdf = self.compute_pdf_from_cf(N=N, L=L, t=t)
 
+        # Set initial value of the chain
         curr = np.random.normal(0, sigma_prop)
+        # Find its corresponding grid point
         ix_curr = np.int64((curr + L / 2) * N / L)
+        # Find its corresponding pdf
         log_pdf_curr = np.log(pdf[ix_curr])
         samples = [curr]
+
+        # Run the chain
         for i in range(n - 1):
+            # Proposal
             prop = samples[-1] + np.random.normal(0, sigma_prop)
+            # Find proposal grid point
             ix_prop = np.int64((prop + L / 2) * N / L)
+            # Find proposal pdf and compte acceptance log ratio
             r = np.log(pdf[ix_prop]) - log_pdf_curr
-            if np.log(np.random.uniform()) < r:
+            if np.log(np.random.uniform()) < r: # accept proposal and update
                 curr = prop
                 ix_curr = ix_prop
                 log_pdf_curr = np.log(pdf[ix_curr])
@@ -129,6 +164,9 @@ class CGMY:
         return samples
 
     def sample(self, n, L=None, N=None, t=1, sigma_prop=0.1):
+        """
+        Sample CGMY + W at time t
+        """
         if L is None:
             L = self.L
         if N is None:
