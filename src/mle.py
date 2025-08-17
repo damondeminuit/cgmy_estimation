@@ -9,18 +9,15 @@ import matplotlib.pyplot as plt
 class CGMY:
     def __init__(self, data, params, adjust_L=False):
         self.data = data
-        self.L = 2.5 * np.max(np.abs(self.data))
-
-        # Ensure the high-density regions are contained in the grid
-        if adjust_L:
-            self.L = 2.5 * max(
-                np.max(np.abs(self.data)), np.abs(self.mean) + 3 * np.sqrt(self.var)
-            )
-        self.N = 2**17
+        self.adjust_L = adjust_L
 
         # Unpack the model parameters
         self.c, self.g, self.m, self.y, self.sigma = params
         self.mu = 0
+
+        self.N = 2**17
+        # Ensure the high-density regions are contained in the grid
+        self.L = 2.5 * np.max(np.abs(self.data))
 
         if self.c < 0 or self.g < 0 or self.m < 0 or self.sigma < 0:
             raise ValueError("Parameters c, g, m and sigma must be positive.")
@@ -67,6 +64,12 @@ class CGMY:
         L: Length of the real grid domain
         t: time of the process
         """
+        if self.adjust_L:
+            self.L = 2.5 * max(
+                np.max(np.abs(self.data)),
+                np.abs(self.mean(t)) + 3 * np.sqrt(self.var(t)),
+            )
+
         if N is None:
             N = self.N
         if L is None:
@@ -87,8 +90,8 @@ class CGMY:
             np.real(pdf), 1e-300
         )  # Return real part to avoid numerical noise
 
-    def log_lik(self):
-        _, pdf = self.compute_pdf_from_cf()
+    def log_lik(self, periods):
+        _, pdf = self.compute_pdf_from_cf(t=1 / periods)
         self.density["pdf"] = pdf[self.density["interval"]]
         self.l = np.sum(np.log(self.density["pdf"]))
 
@@ -123,11 +126,13 @@ class CGMY:
         samples = []
         for i in range(n):
             x = 0
-            nb = np.random.poisson(lam=rate) # number of jump variables
+            nb = np.random.poisson(lam=rate)  # number of jump variables
             for j in range(nb):
-                if np.random.uniform() < p: # sample from the first mixture component
-                    x -= np.random.gamma(shape=-self.y, scale=1 / self.g) # opposite of sample from a gamma distribution
-                else: # sample from the second mixture component
+                if np.random.uniform() < p:  # sample from the first mixture component
+                    x -= np.random.gamma(
+                        shape=-self.y, scale=1 / self.g
+                    )  # opposite of sample from a gamma distribution
+                else:  # sample from the second mixture component
                     x += np.random.gamma(shape=-self.y, scale=1 / self.m)
             samples.append(x)
 
@@ -155,7 +160,7 @@ class CGMY:
             ix_prop = np.int64((prop + L / 2) * N / L)
             # Find proposal pdf and compte acceptance log ratio
             r = np.log(pdf[ix_prop]) - log_pdf_curr
-            if np.log(np.random.uniform()) < r: # accept proposal and update
+            if np.log(np.random.uniform()) < r:  # accept proposal and update
                 curr = prop
                 ix_curr = ix_prop
                 log_pdf_curr = np.log(pdf[ix_curr])
@@ -186,24 +191,24 @@ class CGMY:
 
         return samples
 
-    @property
-    def mean(self):
+    def mean(self, t=1):
         return (
             self.c
+            * t
             * gamma(1 - self.y)
             * (self.m ** (self.y - 1) - self.g ** (self.y - 1))
         )
 
-    @property
-    def var(self):
+    def var(self, t=1):
         return (
             self.c
+            * t
             * (self.m ** (self.y - 2) + self.g ** (self.y - 2))
             * gamma(2 - self.y)
-            + self.sigma**2
+            + t * self.sigma**2
         )
 
 
-def negative_log_lik(params, data):
+def negative_log_lik(params, data, periods=1):
     cgmy = CGMY(data, params, adjust_L=True)
-    return -cgmy.log_lik()
+    return -cgmy.log_lik(periods=periods)
