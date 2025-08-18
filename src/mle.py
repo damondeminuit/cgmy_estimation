@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 class CGMY:
-    def __init__(self, data, params, adjust_L=False):
+    def __init__(self, data, params, adjust_L=False, N=2**17):
         self.data = data
         self.adjust_L = adjust_L
 
@@ -15,7 +15,7 @@ class CGMY:
         self.c, self.g, self.m, self.y, self.sigma = params
         self.mu = 0
 
-        self.N = 2**17
+        self.N = N
         # Ensure the high-density regions are contained in the grid
         self.L = 2.5 * np.max(np.abs(self.data))
 
@@ -90,7 +90,7 @@ class CGMY:
             np.real(pdf), 1e-300
         )  # Return real part to avoid numerical noise
 
-    def log_lik(self, periods):
+    def log_lik(self, periods=1):
         _, pdf = self.compute_pdf_from_cf(t=1 / periods)
         self.density["pdf"] = pdf[self.density["interval"]]
         self.l = np.sum(np.log(self.density["pdf"]))
