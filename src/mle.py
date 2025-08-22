@@ -1,9 +1,7 @@
 import numpy as np
 import pandas as pd
-from scipy.special import gamma
 from scipy.integrate import quad
-from scipy.optimize import minimize, LinearConstraint
-import matplotlib.pyplot as plt
+from scipy.special import gamma
 
 
 class CGMY:
@@ -57,7 +55,7 @@ class CGMY:
         return res
 
     # Use of FFT take from chatgpt
-    def compute_pdf_from_cf(self, N=None, L=None, t=1):
+    def compute_pdf_from_cf(self, N=None, L=None, t=1, characteristic=None):
         """
         Compute PDF from characteristic function using FFT.
         N: Number of grid points (power of 2 for FFT efficiency).
@@ -74,12 +72,14 @@ class CGMY:
             N = self.N
         if L is None:
             L = self.L
+        if characteristic is None:
+            characteristic = self.chara
 
         ## Frequency domain grid
         f_max = np.pi * N / L  # Maximum frequency
         f = np.linspace(-f_max, f_max, N, endpoint=False)
         # Evaluate characteristic function
-        phi = self.chara(f, t=t)
+        phi = characteristic(f, t=t)
         # Apply FFT
         pdf = np.fft.fft(np.fft.fftshift(phi))
         # Adjust for scaling and shift
@@ -142,7 +142,7 @@ class CGMY:
         """
         Sample from CGMY at time t when Y > 0
         """
-        _, pdf = self.compute_pdf_from_cf(N=N, L=L, t=t)
+        _, pdf = self.compute_pdf_from_cf(N=N, L=L, t=t, characteristic=self.chara_jump)
 
         # Set initial value of the chain
         curr = np.random.normal(0, sigma_prop)
